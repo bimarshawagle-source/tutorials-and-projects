@@ -1,0 +1,2 @@
+this folder contains some code files for a sample internal billing software which uses lists, sets and dictionaries in different individual functions in files and prints a reciept as well as automatically applies discount if elligible.
+ 
