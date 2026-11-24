@@ -1,0 +1,96 @@
+import argparse
+import math
+import re
+from pathlib import Path
+
+import cadquery as cq
+import ollama
+
+SYSTEM_PROMPT = """You are a CadQuery parametric 3D CAD code generator.
+Return ONLY valid Python code that uses `cadquery` (imported as `cq`) and optionally `math`.
+Rules:
+1. Define parametric variables at the top of the script.
+2. Assign the final solid, compound, or `cq.Assembly` to a variable named `result`.
+3. Do NOT call `cq.exporters.export` inside the code (the runner handles exporting).
+4. Do NOT include explanations, comments outside code, or markdown fences unless necessary.
+5. Default units are millimeters (mm). Ensure operations like fillets, chamfers, and holes use valid dimensions that will not fail OpenCascade geometry kernels.
+"""
+
+
+def extract_python_code(raw_text: str) -> str:
+    """Extract Python code from LLM output, stripping markdown code fences if present."""
+    fenced = re.search(r"```(?:python)?\s*\n(.*?)```", raw_text, flags=re.DOTALL | re.IGNORECASE)
+    if fenced:
+        return fenced.group(1).strip()
+    return raw_text.strip()
+
+
+def generate_cadquery_code(prompt: str, model: str = "qwen2.5-coder:7b", temperature: float = 0.2) -> str:
+    """Ask a local Ollama model to write CadQuery code from a natural-language description."""
+    response = ollama.chat(
+        model="gemma4:12",
+        messages=[
+            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "user", "content": f"Create a 3D model for: {prompt}"},
+        ],
+        options={"temperature": temperature},
+    )
+    content = response["message"]["content"]
+    return extract_python_code(content)
+
+
+def build_and_export(code: str, out_dir: Path, stem: str, formats: list[str]) -> list[Path]:
+    """Execute generated CadQuery code and export `result` to requested file formats."""
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    # Save generated script for inspection and reproducibility
+    script_path = out_dir / f"{stem}.py"
+    script_path.write_text(code + "\n", encoding="utf-8")
+
+    # Restricted execution namespace
+    namespace: dict[str, object] = {"cq": cq, "math": math, "__builtins__": {}}
+    exec(code, namespace)
+
+    if "result" not in namespace:
+        raise ValueError("Generated code did not define a `result` variable.")
+
+    model_obj = namespace["result"]
+    exported_files: list[Path] = []
+
+    for fmt in formats:
+        ext = fmt.lower().lstrip(".")
+        target = out_dir / f"{stem}.{ext}"
+        cq.exporters.export(model_obj, str(target))
+        exported_files.append(target)
+
+    return exported_files
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description="Generate CadQuery 3D models from text using a local LLM.")
+    parser.add_argument("description", type=str, help="Text description of the part to generate.")
+    parser.add_argument("--model", type=str, default="qwen2.5-coder:7b", help="Local Ollama model name.")
+    parser.add_argument("--out-dir", type=Path, default=Path("cad_output"), help="Output directory.")
+    parser.add_argument("--name", type=str, default="generated_part", help="Base output filename.")
+    parser.add_argument(
+        "--formats",
+        nargs="+",
+        default=["step", "stl"],
+        help="Export formats (e.g., step stl). Note: STEP preserves exact B-Rep geometry; STL is a triangle mesh.",
+    )
+    parser.add_argument("--temperature", type=float, default=0.2, help="LLM sampling temperature.")
+    args = parser.parse_args()
+
+    print(f"Generating CadQuery code using '{args.model}'...")
+    code = generate_cadquery_code(args.description, model=args.model, temperature=args.temperature)
+
+    print("Building geometry and exporting files...")
+    files = build_and_export(code, out_dir=args.out_dir, stem=args.name, formats=args.formats)
+
+    print(f"Saved script: {args.out_dir / (args.name + '.py')}")
+    for f in files:
+        print(f"Exported: {f}")
+
+
+if __name__ == "__main__":
+    main()
