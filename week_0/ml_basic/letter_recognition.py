@@ -1,7 +1,7 @@
 import cv2
-import easyocr
+import pytesseract
 
-
+"""
 def recognize_letters(image_path, min_confidence , save_annotated):
     
     # Initialize EasyOCR reader for English ('gpu=False' works on CPU; set to False as Gpu was not detected)
@@ -52,3 +52,11 @@ def recognize_letters(image_path, min_confidence , save_annotated):
 
 sample_image = r"C:/Users/user/Documents/local_repo_1/week_0/ml_basic/A_ocrtest.png"  # this is the image path
 recognize_letters(sample_image, min_confidence=0.05, save_annotated=True)
+    
+"""
+def ocr_core(img):
+    text = pytesseract.image_to_string(img)
+    return text
+
+img = cv2.imread(r"C:/Users/user/Documents/local_repo_1/week_0/ml_basic/A_ocrtest.png")  # this is the image path
+print(ocr_core(img))  # this will print the text detected in the image
